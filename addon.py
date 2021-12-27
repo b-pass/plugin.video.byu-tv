@@ -2,9 +2,10 @@
 # -*- coding: utf-8 -*-
 import sys
 import os
-from urllib.parse import parse_qs
+import re
 import requests
 import json
+from urllib.parse import parse_qsl
 
 import xbmc
 import xbmcgui
@@ -41,7 +42,7 @@ def list_categories():
     # pageid 56c21af3-61cc-4b15-b21c-ec68762fcfeb = magic number for main category listing
     resp = get_json('/page/getpage', pageid='56c21af3-61cc-4b15-b21c-ec68762fcfeb')
     for cat in resp.get('lists', []):
-        if cat.get('contenType', '') != 'Show':
+        if cat.get('contentType', '') != 'Show':
             continue
         id = cat.get('id', '')
         if not id:
@@ -49,12 +50,26 @@ def list_categories():
         item = xbmcgui.ListItem(label=cat['name'])
         item.setInfo('video', {'title':cat['name'], 'set':cat['name'], 'genre':cat['name'].split()})
         url = '{0}?action=category&id={1}'.format(PLUGIN_BASE, id)
-        items.append((item, url, True))
-    
+        items.append((url, item, True))
+    log('Listed {} categories', len(items))
     xbmcplugin.addDirectoryItems(HANDLE, items, len(items))
     xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_LABEL_IGNORE_THE)
     xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_GENRE)
     xbmcplugin.endOfDirectory(HANDLE)
+
+def getart(img):
+    art = {}
+    if img and 'images' in img[0] and img[0]['images'] and 'url' in img[0]['images'][0]:
+        for i in img[0]['images']:
+            if 'size' in i:
+                if i['size'].startswith('512'):
+                    art['poster'] = i['url']
+                    art['banner'] = i['url']
+                    art['fanart'] = i['url']
+                elif i['size'].startswith('128x'):
+                    art['icon'] = i['url']
+    return art
+
 
 def list_category(listid):
     items = []
@@ -74,12 +89,10 @@ def list_category(listid):
         item = xbmcgui.ListItem(label=show['title'])
         if show.get('subtitle', ''):
             item.setLabel2(show['subtitle'])
-        img = show.get('images', [])
-        if img and 'images' in img[0] and img[0]['images'] and 'url' in img[0]['images'][0]:
-            item.setArt({'banner':img[0]['images'][-1]['url'], 'icon':img[0]['images'][0]['url']})
+        item.setArt(getart(show.get('images', [])))
         item.setInfo('video', {'title':show['title'], 'set':show['title'], 'setoverview':show.get('description', ''), 'mediatype':'tvshow'})
         url = '{0}?action=show&id={1}'.format(PLUGIN_BASE, id)
-        items.append((item, url, True))
+        items.append((url, item, True))
     
     xbmcplugin.addDirectoryItems(HANDLE, items, len(items))
     xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_LABEL_IGNORE_THE)
@@ -103,7 +116,7 @@ def list_show(showid):
         item = xbmcgui.ListItem(label=season['name'])
         item.setInfo('video', {'title':season['name'], 'set':season['name'], 'setoverview':season['name'], 'season':n, 'mediatype':'season'})
         url = '{0}?action=season&id={1}&num={2}'.format(PLUGIN_BASE, id, n)
-        items.append((item, url, True))
+        items.append((url, item, True))
     
     xbmcplugin.addDirectoryItems(HANDLE, items, len(items))
     xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_LABEL_IGNORE_THE)
@@ -112,6 +125,7 @@ def list_show(showid):
 
 def list_season(sid, snum):
     n = 0
+    items = []
 
     # getpage for an episode just gives the title, nothing useful
     # start and limit are required, webapp uses 0,20
@@ -130,9 +144,7 @@ def list_season(sid, snum):
                 continue
         
         item = xbmcgui.ListItem(label=ep['subtitle'])
-        img = ep.get('images', [])
-        if img and 'images' in img[0] and img[0]['images'] and 'url' in img[0]['images'][0]:
-            item.setArt({'banner':img[0]['images'][-1]['url'], 'icon':img[0]['images'][0]['url']})
+        item.setArt(getart(ep.get('images', [])))
         dur = 0
         if 'videoLength' in ep:
             p = ep['videoLength'].split(':', 2)
@@ -153,13 +165,14 @@ def list_season(sid, snum):
             'season':snum,
             'episode':n
         })
+        item.setProperty('IsPlayable', 'true')
         url = '{0}?action=play&id={1}'.format(PLUGIN_BASE, id)
-        items.append((item, url, True))
+        items.append((url, item, False))
     
     xbmcplugin.addDirectoryItems(HANDLE, items, len(items))
+    xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_EPISODE)
     xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_LABEL_IGNORE_THE)
     xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_TITLE_IGNORE_THE)
-    xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_EPISODE)
     xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_VIDEO_RUNTIME)
     xbmcplugin.endOfDirectory(HANDLE)
 
@@ -169,12 +182,6 @@ def play_video(vid):
     vr = get_json('/catalog/getvideosforcontentv2', contentid=vid)
     if 'videos' in vr:
         vr = vr['videos']
-        if 'hls1' in vr:
-            vtype = 'hls'
-            vr = vr['hls1']
-        elif 'hls' in vr:
-            vtype = 'hls'
-            vr = vr['hls']
         if 'dash1' in vr:
             vtype = 'mpd'
             vr = vr['dash1']
@@ -182,22 +189,45 @@ def play_video(vid):
             vtype = 'mpd'
             vr = vr['dash']
     
-    # preplayUrl has fairplay DRM info and then a "playURL" which is the mpd/m3u8
-    # but videoUrl is a different URL which leads directly to a mpd/m3u8... unsure what the difference is
-    # maybe videoUrl is won't always be present, like when there actually is DRM?
     if 'videoUrl' in vr:
         url = vr['videoUrl']
-    elif 'preplayUrl' in vr:
-        preplay = requests.get(vr['preplayUrl'])
-        if preplay.status_code == 200:
-            url = preplay.json().get('playURL')
-        else:
-            log('Preplay failure: {}', preplay.status_code)
+    #if 'preplayUrl' in vr:
+    #    # preplayUrl has fairplay DRM info and then a "playURL" which is the mpd/m3u8
+    #    preplay = requests.get(vr['preplayUrl'], headers=API_HEADERS)
+    #    if preplay.status_code == 200:
+    #        url = preplay.json().get('playURL')
+    #    else:
+    #        log('Preplay failure: {}', preplay.status_code)
 
+    log('video {} URL = {}', vtype, url)
     if url:
+        mpdresp = requests.get(url, headers=API_HEADERS)
+
+        '''
+        profile = xbmcaddon.Addon('plugin.video.byu-tv').getAddonInfo('profile')
+        profile = xbmc.translatePath(profile)
+        try:
+            os.makedirs(profile)
+        except:
+            pass
+        localmpd = os.path.join(profile, 'byutv.mpd')
+        log(localmpd)
+
+        with open(localmpd, 'w') as mpd:
+            mpd.write(mpdresp.text)
+        '''
+
         item = xbmcgui.ListItem(path=url, offscreen=True)
         item.setProperty('inputstream','inputstream.adaptive')
         item.setProperty('inputstream.adaptive.manifest_type', vtype)
+        item.setProperty('inputstream.adaptive.license_type', 'com.widevine.alpha')
+        m = re.search(r'"([^"]*/wv?[^"]*)"', mpdresp.text)
+        if True: #if m:
+            lic = m.group(1).replace('&amp;', '&')
+            log('lic = {}', lic)
+            item.setProperty('inputstream.adaptive.license_key', lic)
+        item.setMimeType('application/dash+xml')
+        item.setProperty('IsPlayable', 'true')
         xbmcplugin.setResolvedUrl(HANDLE, True, item)
     else:
         log('No video URL? vid={}, resp={}', vid, vr, level=xbmc.LOGERROR)
@@ -205,10 +235,10 @@ def play_video(vid):
 
 if __name__ == '__main__':
     PLUGIN_BASE = sys.argv[0]
-    HANDLE = sys.argv[1]
+    HANDLE = int(sys.argv[1])
 
     if len(sys.argv) > 2 and len(sys.argv[2]) > 1:
-        args = parse_qs(sys.argv[2][1:])
+        args = dict(parse_qsl(sys.argv[2][1:]))
     else:
         args = {}
     
@@ -220,7 +250,7 @@ if __name__ == '__main__':
     elif action == 'show':
         list_show(args.get('id'))
     elif action == 'season':
-        list_season(args.get('id'), int(args.get(n)))
+        list_season(args.get('id'), int(args.get('n', 0)))
     elif action == 'play':
         play_video(args.get('id'))
     else:
