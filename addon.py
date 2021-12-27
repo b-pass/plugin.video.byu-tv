@@ -177,55 +177,33 @@ def list_season(sid, snum):
     xbmcplugin.endOfDirectory(HANDLE)
 
 def play_video(vid):
-    url = None
-    vtype = None
     vr = get_json('/catalog/getvideosforcontentv2', contentid=vid)
     if 'videos' in vr:
         vr = vr['videos']
         if 'dash1' in vr:
-            vtype = 'mpd'
             vr = vr['dash1']
         elif 'dash' in vr:
-            vtype = 'mpd'
             vr = vr['dash']
+        else:
+            log('No DASH section found in getvideosforcontentv2')
     
     if 'videoUrl' in vr:
         url = vr['videoUrl']
-    #if 'preplayUrl' in vr:
-    #    # preplayUrl has fairplay DRM info and then a "playURL" which is the mpd/m3u8
-    #    preplay = requests.get(vr['preplayUrl'], headers=API_HEADERS)
-    #    if preplay.status_code == 200:
-    #        url = preplay.json().get('playURL')
-    #    else:
-    #        log('Preplay failure: {}', preplay.status_code)
+    else:
+        log('No videoUrl :(')
+        url = ''
 
-    log('video {} URL = {}', vtype, url)
     if url:
         mpdresp = requests.get(url, headers=API_HEADERS)
-
-        '''
-        profile = xbmcaddon.Addon('plugin.video.byu-tv').getAddonInfo('profile')
-        profile = xbmc.translatePath(profile)
-        try:
-            os.makedirs(profile)
-        except:
-            pass
-        localmpd = os.path.join(profile, 'byutv.mpd')
-        log(localmpd)
-
-        with open(localmpd, 'w') as mpd:
-            mpd.write(mpdresp.text)
-        '''
+        m = re.search(r'"([^"]*/wv\?[^"]*)"', mpdresp.text)
+        lic = m.group(1).replace('&amp;', '&')
+        lic += '||R{SSM}|'
 
         item = xbmcgui.ListItem(path=url, offscreen=True)
         item.setProperty('inputstream','inputstream.adaptive')
-        item.setProperty('inputstream.adaptive.manifest_type', vtype)
+        item.setProperty('inputstream.adaptive.manifest_type', 'mpd'')
         item.setProperty('inputstream.adaptive.license_type', 'com.widevine.alpha')
-        m = re.search(r'"([^"]*/wv?[^"]*)"', mpdresp.text)
-        if True: #if m:
-            lic = m.group(1).replace('&amp;', '&')
-            log('lic = {}', lic)
-            item.setProperty('inputstream.adaptive.license_key', lic)
+        item.setProperty('inputstream.adaptive.license_key', lic)
         item.setMimeType('application/dash+xml')
         item.setProperty('IsPlayable', 'true')
         xbmcplugin.setResolvedUrl(HANDLE, True, item)
