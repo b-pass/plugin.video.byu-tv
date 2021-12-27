@@ -201,7 +201,7 @@ def play_video(vid):
 
         item = xbmcgui.ListItem(path=url, offscreen=True)
         item.setProperty('inputstream','inputstream.adaptive')
-        item.setProperty('inputstream.adaptive.manifest_type', 'mpd'')
+        item.setProperty('inputstream.adaptive.manifest_type', 'mpd')
         item.setProperty('inputstream.adaptive.license_type', 'com.widevine.alpha')
         item.setProperty('inputstream.adaptive.license_key', lic)
         item.setMimeType('application/dash+xml')
