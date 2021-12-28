@@ -5,7 +5,7 @@ import os
 import re
 import requests
 import json
-from urllib.parse import parse_qsl
+from urllib.parse import parse_qsl, quote_plus
 
 import xbmc
 import xbmcgui
@@ -69,23 +69,24 @@ def list_categories():
         items.append((url, item, True))
     log('Listed {} categories', len(items))
     xbmcplugin.addDirectoryItems(HANDLE, items, len(items))
+    xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_UNSORTED)
     xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_LABEL_IGNORE_THE)
     xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_GENRE)
     xbmcplugin.endOfDirectory(HANDLE)
 
-def getart(img):
+def getart(img, poster=False):
     art = {}
     if img and 'images' in img[0] and img[0]['images'] and 'url' in img[0]['images'][0]:
         for i in img[0]['images']:
             if 'size' in i:
-                if i['size'].startswith('512'):
+                if poster and (i['size'].startswith('1280') or i['size'].startswith('720')):
                     art['poster'] = i['url']
-                    art['banner'] = i['url']
-                    art['fanart'] = i['url']
+                    poster = False
+                if i['size'].startswith('512'):
+                    art['thumb'] = i['url']
                 elif i['size'].startswith('128x'):
                     art['icon'] = i['url']
     return art
-
 
 def list_category(listid):
     items = []
@@ -119,22 +120,24 @@ def list_category(listid):
             item = xbmcgui.ListItem(label=show['title'])
             if show.get('subtitle', ''):
                 item.setLabel2(show['subtitle'])
-            item.setArt(getart(show.get('images', [])))
+            art = getart(show.get('images', []), poster=True)
+            item.setArt(art)
             item.setInfo('video', {
                 'title':show['title'],
                 'set':show['title'],
                 'setoverview':show.get('description', ''),
                 'mediatype':'tvshow'
             })
-            url = '{0}?action=show&id={1}'.format(PLUGIN_BASE, id)
+            url = '{0}?action=show&id={1}&poster={2}'.format(PLUGIN_BASE, id, quote_plus(art.get('poster', '')))
             items.append((url, item, True))
     
     xbmcplugin.addDirectoryItems(HANDLE, items, len(items))
     xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_LABEL_IGNORE_THE)
     xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_TITLE_IGNORE_THE)
+    xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_UNSORTED)
     xbmcplugin.endOfDirectory(HANDLE)
 
-def list_show(showid):
+def list_show(showid, poster=''):
     # catalog/getshow?showid=<UUID> gives title/subtitle/description images, season count, episode count
     # ... but does not give the season list with season IDs
     items = []
@@ -160,6 +163,9 @@ def list_show(showid):
             'mediatype':'season'
         })
 
+        if poster:
+            item.setArt({'poster':poster})
+
         snum = n
         try:
             if season['name'].startswith('Season'):
@@ -167,10 +173,10 @@ def list_show(showid):
         except:
             pass
 
-        url = '{0}?action=season&id={1}&n={2}'.format(PLUGIN_BASE, id, snum)
+        url = f'{PLUGIN_BASE}?action=season&n={snum:03d}&id={id}'
         items.append((url, item, True))
     
-    xbmcplugin.addDirectoryItems(HANDLE, items, len(items))
+    xbmcplugin.addDirectoryItems(HANDLE, sorted(items, key=lambda t: t[0]), len(items))
     
     # show has un-season'd episodes, list them too
     for e in eps:
@@ -178,6 +184,7 @@ def list_show(showid):
             ei = list_season(e, 0, True)
             xbmcplugin.addDirectoryItems(HANDLE, ei, len(ei))
 
+    xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_UNSORTED)
     xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_LABEL_IGNORE_THE)
     xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_TITLE_IGNORE_THE)
     xbmcplugin.endOfDirectory(HANDLE)
@@ -251,8 +258,8 @@ def list_season(sid, snum, listonly=False):
     
     xbmcplugin.addDirectoryItems(HANDLE, items, len(items))
     xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_EPISODE)
-    xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_LABEL_IGNORE_THE)
     xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_TITLE_IGNORE_THE)
+    xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_LABEL_IGNORE_THE)
     xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_VIDEO_RUNTIME)
     xbmcplugin.endOfDirectory(HANDLE)
 
@@ -307,7 +314,7 @@ if __name__ == '__main__':
     elif action == 'category':
         list_category(args.get('id'))
     elif action == 'show':
-        list_show(args.get('id'))
+        list_show(args.get('id'), args.get('poster', ''))
     elif action == 'season':
         list_season(args.get('id'), int(args.get('n', 0)))
     elif action == 'play':
