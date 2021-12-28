@@ -37,14 +37,17 @@ def get_json(url, **params):
     else:
         return resp.json()
 
-def do_login(email, pw):
-    info = {'email':email,'password':pw}
+def do_login():
+    info = {
+        'email':xbmcplugin.getSetting(HANDLE, 'email'),
+        'password':xbmcplugin.getSetting(HANDLE, 'password')
+    }
     resp = requests.post('https://accounts-api.byub.org/v1/public/login', json=info, headers=API_HEADERS)
     # TODO save tokens
     auth = resp.json()
     API_HEADERS['Authorization'] = auth['access_token']
-    token_expr = auth['expiration'] - 60 + time.time()
-    refresh_token = auth['refresh_token']
+    auth['expiration'] += time.time() - 60
+    xbmcplugin.setSetting(HANDLE, 'auth', json.dumps(auth))
 
 # auth required for these:
 # TODO favorites? /user/isfavorited?contentid=<UUID>
@@ -137,9 +140,58 @@ def list_category(listid):
     xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_UNSORTED)
     xbmcplugin.endOfDirectory(HANDLE)
 
+def list_show_flat(showid, poster=''):
+    # catalog/getshow?showid=<UUID> gives title/subtitle/description images, season count, episode count
+    # ... but does not give the season list with season IDs
+
+    seasons = []
+    eps = []
+    n = 0
+    resp = get_json('/page/getpage', pageid=showid)
+    for season in resp.get('lists', []):
+        if season.get('type', '') != 'ShowSeason':
+            if season.get('contentType', '') == 'Episode':
+                eps.append(season.get('id', ''))
+            continue
+        n += 1
+        id = season.get('id', '')
+        if not id:
+            continue
+        
+        snum = n
+        try:
+            if season['name'].startswith('Season'):
+                snum = int(season['name'][6:].strip())
+        except:
+            pass
+
+        seasons.append((snum, id))
+    
+    est = 0
+    done = 0
+    for x in sorted(seasons):
+        se = list_season(x[1], x[0], True)
+        if not est:
+            est = len(seasons) * len(se) + len(eps)
+        for i in se:
+            xbmcplugin.addDirectoryItem(HANDLE, i[0], i[1], i[2], est)
+    
+    # show has un-season'd episodes, list them too
+    for e in eps:
+        if e:
+            ei = list_season(e, 0, True)
+            xbmcplugin.addDirectoryItems(HANDLE, ei, len(ei))
+
+    xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_EPISODE)
+    xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_UNSORTED)
+    xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_LABEL_IGNORE_THE)
+    xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_TITLE_IGNORE_THE)
+    xbmcplugin.endOfDirectory(HANDLE)
+
 def list_show(showid, poster=''):
     # catalog/getshow?showid=<UUID> gives title/subtitle/description images, season count, episode count
     # ... but does not give the season list with season IDs
+
     items = []
     eps = []
     n = 0
@@ -176,7 +228,8 @@ def list_show(showid, poster=''):
         url = f'{PLUGIN_BASE}?action=season&n={snum:03d}&id={id}'
         items.append((url, item, True))
     
-    xbmcplugin.addDirectoryItems(HANDLE, sorted(items, key=lambda t: t[0]), len(items))
+    if items:
+        xbmcplugin.addDirectoryItems(HANDLE, sorted(items, key=lambda t: t[0]), len(items))
     
     # show has un-season'd episodes, list them too
     for e in eps:
@@ -307,14 +360,21 @@ if __name__ == '__main__':
         args = dict(parse_qsl(sys.argv[2][1:]))
     else:
         args = {}
-    
     action = args.get('action', None)
     if not action:
         list_categories()
     elif action == 'category':
         list_category(args.get('id'))
     elif action == 'show':
-        list_show(args.get('id'), args.get('poster', ''))
+        flat = False
+        try:
+            flat = xbmcplugin.getSetting(HANDLE, 'noSeasons').upper()[:1] == 'T'
+        except:
+            pass
+        if flat:
+            list_show_flat(args.get('id'))
+        else:
+            list_show(args.get('id'), args.get('poster', ''))
     elif action == 'season':
         list_season(args.get('id'), int(args.get('n', 0)))
     elif action == 'play':

@@ -1,0 +1,8 @@
+<settings>
+    <category label="16000">
+        <setting label="1048" type="text"   id="username" default=""/>
+        <setting label="733" type="text"   id="password" option="hidden"  enable="!eq(-1,)" default=""/>
+        <setting type="sep"/>
+        <setting id="noSeasons" type="bool" label="20412" default="false"/>
+    </category>
+</settings>
