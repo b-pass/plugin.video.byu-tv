@@ -37,6 +37,22 @@ def get_json(url, **params):
     else:
         return resp.json()
 
+def do_login(email, pw):
+    info = {'email':email,'password':pw}
+    resp = requests.post('https://accounts-api.byub.org/v1/public/login', json=info, headers=API_HEADERS)
+    # TODO save tokens
+    auth = resp.json()
+    API_HEADERS['Authorization'] = auth['access_token']
+    token_expr = auth['expiration'] - 60 + time.time()
+    refresh_token = auth['refresh_token']
+
+# auth required for these:
+# TODO favorites? /user/isfavorited?contentid=<UUID>
+#           POST /user/addtofavorites {"contentid":uuid}
+#     ... looks like getting the favorites list is based on the user from GET https://accounts-api.byub.org/v1/public/users/me?channel=byutv
+# TODO percent played: /user/getpercentplayedforepisodes?episodelist=[%276da07694-9548-4225-94af-95f24df89817%27,%27dd6bbd6e-1bb3-4950-95e1-2f5ef931a1f7%27,%27724cc8aa-52c6-42a4-9e4d-ef33674d4824%27,%2709ad97da-c4a8-44c4-91c7-18635bee713e%27,%2768aaf2f3-e61e-438f-8495-e71711293350%27,%2748bb00af-5cfc-4231-8ea6-21c91f7dc2eb%27,%2720e3d42b-38c9-4ef9-8323-4199763907aa%27,%27e2e5de1a-f9b2-4c33-842f-cec2c157c7de%27,%272e69312c-aa09-4ee4-97e7-355f18a3d837%27,%272cc09765-6a1b-4360-b4ce-d802d1fc6de9%27,%274fbec4d3-6c77-4f3d-bed0-f41a923caec1%27,%27b8773ebd-bfaf-4642-9353-cffac5b4f470%27,%2779e16163-7385-4082-ae3c-81851864af32%27,%27abdae8e9-e3cf-4bdd-83e4-aed423652025%27,%2792cd1a13-3213-4638-92e3-238a73438aad%27,%27539b7898-7bcf-4d3c-b249-8a3f0fe9104a%27,%270032042b-55e6-4014-9a99-4d29ad4e66ac%27,%279a75db84-a8a0-4bf4-8b39-26964f25cb98%27]&channel=byutv'
+# also be a good citizen and check requireLogin on episodes
+
 def list_categories():
     items = []
     # pageid 56c21af3-61cc-4b15-b21c-ec68762fcfeb = magic number for main category listing
@@ -80,19 +96,38 @@ def list_category(listid):
         if show.get('type', '') != 'Show':
             continue
 
-        id = show.get('target', {}).get('value', None)
+        target = show.get('target', {})
+        id = target.get('value', None)
         if not id:
             id = show.get('id', '')
             if not id:
                 continue
         
-        item = xbmcgui.ListItem(label=show['title'])
-        if show.get('subtitle', ''):
-            item.setLabel2(show['subtitle'])
-        item.setArt(getart(show.get('images', [])))
-        item.setInfo('video', {'title':show['title'], 'set':show['title'], 'setoverview':show.get('description', ''), 'mediatype':'tvshow'})
-        url = '{0}?action=show&id={1}'.format(PLUGIN_BASE, id)
-        items.append((url, item, True))
+        if target.get('type', '') == 'Player':
+            item = xbmcgui.ListItem(label=show['title'])
+            item.setArt(getart(show.get('images', [])))
+            item.setInfo('video', {
+                'title':show.get('subtitle', show['title']),
+                'tvshowtitle':show['title'],
+                'plot':show.get('description', ''),
+                'mediatype':'video'
+            })
+            item.setProperty('IsPlayable', 'true')
+            url = '{0}?action=play&id={1}'.format(PLUGIN_BASE, id)
+            items.append((url, item, False))
+        else:
+            item = xbmcgui.ListItem(label=show['title'])
+            if show.get('subtitle', ''):
+                item.setLabel2(show['subtitle'])
+            item.setArt(getart(show.get('images', [])))
+            item.setInfo('video', {
+                'title':show['title'],
+                'set':show['title'],
+                'setoverview':show.get('description', ''),
+                'mediatype':'tvshow'
+            })
+            url = '{0}?action=show&id={1}'.format(PLUGIN_BASE, id)
+            items.append((url, item, True))
     
     xbmcplugin.addDirectoryItems(HANDLE, items, len(items))
     xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_LABEL_IGNORE_THE)
@@ -103,10 +138,13 @@ def list_show(showid):
     # catalog/getshow?showid=<UUID> gives title/subtitle/description images, season count, episode count
     # ... but does not give the season list with season IDs
     items = []
+    eps = []
     n = 0
     resp = get_json('/page/getpage', pageid=showid)
     for season in resp.get('lists', []):
         if season.get('type', '') != 'ShowSeason':
+            if season.get('contentType', '') == 'Episode':
+                eps.append(season.get('id', ''))
             continue
         n += 1
         id = season.get('id', '')
@@ -114,16 +152,37 @@ def list_show(showid):
             continue
         
         item = xbmcgui.ListItem(label=season['name'])
-        item.setInfo('video', {'title':season['name'], 'set':season['name'], 'setoverview':season['name'], 'season':n, 'mediatype':'season'})
-        url = '{0}?action=season&id={1}&num={2}'.format(PLUGIN_BASE, id, n)
+        item.setInfo('video', {
+            'title':season['name'], 
+            'set':season['name'], 
+            'setoverview':season['name'], 
+            'season':n, 
+            'mediatype':'season'
+        })
+
+        snum = n
+        try:
+            if season['name'].startswith('Season'):
+                snum = int(season['name'][6:].strip())
+        except:
+            pass
+
+        url = '{0}?action=season&id={1}&n={2}'.format(PLUGIN_BASE, id, snum)
         items.append((url, item, True))
     
     xbmcplugin.addDirectoryItems(HANDLE, items, len(items))
+    
+    # show has un-season'd episodes, list them too
+    for e in eps:
+        if e:
+            ei = list_season(e, 0, True)
+            xbmcplugin.addDirectoryItems(HANDLE, ei, len(ei))
+
     xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_LABEL_IGNORE_THE)
     xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_TITLE_IGNORE_THE)
     xbmcplugin.endOfDirectory(HANDLE)
 
-def list_season(sid, snum):
+def list_season(sid, snum, listonly=False):
     n = 0
     items = []
 
@@ -143,10 +202,23 @@ def list_season(sid, snum):
             if not id:
                 continue
         
-        item = xbmcgui.ListItem(label=ep['subtitle'])
+        url = '{0}?action=play&id={1}'.format(PLUGIN_BASE, id)
+        
+        info = {
+            'tvshowtitle':ep['title'],
+            'plot':ep.get('description', '')
+        }
+
+        if 'subtitle' in ep:
+            info['title'] = ep['subtitle']
+        else:
+            info['title'] = ep['title']
+        
+        item = xbmcgui.ListItem(label=info['title'])
         item.setArt(getart(ep.get('images', [])))
-        dur = 0
+        
         if 'videoLength' in ep:
+            dur = 0
             p = ep['videoLength'].split(':', 2)
             if len(p) >= 3:
                 dur = int(p[0]) * 3600
@@ -156,18 +228,26 @@ def list_season(sid, snum):
                 del p[0]
             if len(p):
                 dur += int(p[0])
-        item.setInfo('video', {
-            'title':ep['subtitle'], 
-            'tvshowtitle':ep['title'],
-            'plot':ep.get('description', ''),
-            'duration': dur,
-            'mediatype':'episode',
-            'season':snum,
-            'episode':n
-        })
+            if dur:
+                info['duration'] = dur
+        if snum:
+            info['mediatype'] = 'episode'
+            info['season'] = snum
+            info['episode'] = n
+        else:
+            info['mediatype'] = 'video'
+            
+        # TODO: check this
+        #if ep.get('requireLogin', False):
+        #    url = ''
+        #    info['overlay'] = 3 #locked
+        
+        item.setInfo('video', info)
         item.setProperty('IsPlayable', 'true')
-        url = '{0}?action=play&id={1}'.format(PLUGIN_BASE, id)
         items.append((url, item, False))
+    
+    if listonly:
+        return items
     
     xbmcplugin.addDirectoryItems(HANDLE, items, len(items))
     xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_EPISODE)
@@ -177,6 +257,7 @@ def list_season(sid, snum):
     xbmcplugin.endOfDirectory(HANDLE)
 
 def play_video(vid):
+    # TODO post /user/saveplayhistory {'id':uuid,'playhead':seconds}
     vr = get_json('/catalog/getvideosforcontentv2', contentid=vid)
     if 'videos' in vr:
         vr = vr['videos']
