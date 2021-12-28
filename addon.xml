@@ -6,20 +6,20 @@
   <requires>
     <import addon="xbmc.python" version="3.0.0"/>
     <import addon="script.module.requests" version="2.22.0"/>
+    <import addon="script.module.inputstreamhelper" version="0.5.8+matrix.1"/>
   </requires>
   <extension point="xbmc.python.pluginsource" library="addon.py">
     <provides>video</provides>
   </extension>
   <extension point="xbmc.addon.metadata">
-    <summary lang="en_US">BYUtv</summary>
-    <description lang="en_US">The mission of BYUtv is to create purposeful, engaging viewing and listening experiences that entertain, inspire, uplift, and improve families and communities. Our vision is to be the family entertainment brand that young people want, parents trust, and families enjoy together. </description>
-    <disclaimer lang="en_US">Unofficial, not affiliated with or allowed by BYUtv.</disclaimer>
+    <summary lang="en_GB">BYUtv</summary>
+    <description lang="en_GB">The mission of BYUtv is to create purposeful, engaging viewing and listening experiences that entertain, inspire, uplift, and improve families and communities. Our vision is to be the family entertainment brand that young people want, parents trust, and families enjoy together. </description>
+    <disclaimer lang="en_GB">Unofficial and not affiliated with or specifically authorized by BYUtv.</disclaimer>
     <platform>all</platform>
     <language>en</language>
     <license>Boost-1.0</license>
     <website>https://www.byutv.org</website>
     <source>https://github.com/b-pass/plugin.video.byu-tv</source>
-    <news>Addon created in Jan 2022</news>
     <assets>
         <icon>resources/icon.png</icon>
         <fanart>resources/fanart.png</fanart>
