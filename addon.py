@@ -12,6 +12,7 @@ import xbmcgui
 import xbmcaddon
 import xbmcplugin
 
+HANDLE = -1
 API_BASE = 'https://api.byutv.org/api3'
 API_HEADERS = {
     'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:95.0) Gecko/20100101 Firefox/95.0',
@@ -77,14 +78,15 @@ def list_categories():
     xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_GENRE)
     xbmcplugin.endOfDirectory(HANDLE)
 
-def getart(img, poster=False):
+def getart(img, fanart=False):
     art = {}
     if img and 'images' in img[0] and img[0]['images'] and 'url' in img[0]['images'][0]:
         for i in img[0]['images']:
             if 'size' in i:
-                if poster and (i['size'].startswith('1280') or i['size'].startswith('720')):
-                    art['poster'] = i['url']
-                    poster = False
+                if fanart and (i['size'].startswith('1280') or i['size'].startswith('720')):
+                    art['fanart'] = i['url']
+                    art['landscape'] = i['url']
+                    fanart = False
                 if i['size'].startswith('512'):
                     art['thumb'] = i['url']
                 elif i['size'].startswith('128x'):
@@ -123,7 +125,7 @@ def list_category(listid):
             item = xbmcgui.ListItem(label=show['title'])
             if show.get('subtitle', ''):
                 item.setLabel2(show['subtitle'])
-            art = getart(show.get('images', []), poster=True)
+            art = getart(show.get('images', []), fanart=True)
             item.setArt(art)
             item.setInfo('video', {
                 'title':show['title'],
@@ -131,7 +133,7 @@ def list_category(listid):
                 'setoverview':show.get('description', ''),
                 'mediatype':'tvshow'
             })
-            url = '{0}?action=show&id={1}&poster={2}'.format(PLUGIN_BASE, id, quote_plus(art.get('poster', '')))
+            url = '{0}?action=show&id={1}&fanart={2}'.format(PLUGIN_BASE, id, quote_plus(art.get('fanart', '')))
             items.append((url, item, True))
     
     xbmcplugin.addDirectoryItems(HANDLE, items, len(items))
@@ -140,7 +142,7 @@ def list_category(listid):
     xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_UNSORTED)
     xbmcplugin.endOfDirectory(HANDLE)
 
-def list_show_flat(showid, poster=''):
+def list_show_flat(showid, fanart=''):
     # catalog/getshow?showid=<UUID> gives title/subtitle/description images, season count, episode count
     # ... but does not give the season list with season IDs
 
@@ -168,9 +170,8 @@ def list_show_flat(showid, poster=''):
         seasons.append((snum, id))
     
     est = 0
-    done = 0
     for x in sorted(seasons):
-        se = list_season(x[1], x[0], True)
+        se = list_season(x[1], x[0], listonly=True, fanart=fanart)
         if not est:
             est = len(seasons) * len(se) + len(eps)
         for i in se:
@@ -179,16 +180,17 @@ def list_show_flat(showid, poster=''):
     # show has un-season'd episodes, list them too
     for e in eps:
         if e:
-            ei = list_season(e, 0, True)
+            ei = list_season(e, 0, listonly=True, fanart=fanart)
             xbmcplugin.addDirectoryItems(HANDLE, ei, len(ei))
 
     xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_EPISODE)
     xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_UNSORTED)
     xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_LABEL_IGNORE_THE)
     xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_TITLE_IGNORE_THE)
+    xbmcplugin.setContent(HANDLE, 'episode')
     xbmcplugin.endOfDirectory(HANDLE)
 
-def list_show(showid, poster=''):
+def list_show(showid, fanart=''):
     # catalog/getshow?showid=<UUID> gives title/subtitle/description images, season count, episode count
     # ... but does not give the season list with season IDs
 
@@ -215,8 +217,8 @@ def list_show(showid, poster=''):
             'mediatype':'season'
         })
 
-        if poster:
-            item.setArt({'poster':poster})
+        if fanart:
+            item.setArt({'fanart':fanart, 'landscape':fanart})
 
         snum = n
         try:
@@ -234,15 +236,16 @@ def list_show(showid, poster=''):
     # show has un-season'd episodes, list them too
     for e in eps:
         if e:
-            ei = list_season(e, 0, True)
+            ei = list_season(e, 0, listonly=True, fanart=fanart)
             xbmcplugin.addDirectoryItems(HANDLE, ei, len(ei))
 
     xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_UNSORTED)
     xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_LABEL_IGNORE_THE)
     xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_TITLE_IGNORE_THE)
+    #xbmcplugin.setContent(HANDLE, 'season')
     xbmcplugin.endOfDirectory(HANDLE)
 
-def list_season(sid, snum, listonly=False):
+def list_season(sid, snum, fanart='', listonly=False):
     n = 0
     items = []
 
@@ -262,7 +265,6 @@ def list_season(sid, snum, listonly=False):
             if not id:
                 continue
         
-        url = '{0}?action=play&id={1}'.format(PLUGIN_BASE, id)
         
         info = {
             'tvshowtitle':ep['title'],
@@ -274,20 +276,20 @@ def list_season(sid, snum, listonly=False):
         else:
             info['title'] = ep['title']
         
-        item = xbmcgui.ListItem(label=info['title'])
-        item.setArt(getart(ep.get('images', [])))
+        item = xbmcgui.ListItem(info['title'])
+
+        art = getart(ep.get('images', []))
+        if fanart:
+            art['fanart'] = fanart
+            art['landscape'] = fanart
+        item.setArt(art)
         
         if 'videoLength' in ep:
             dur = 0
-            p = ep['videoLength'].split(':', 2)
-            if len(p) >= 3:
-                dur = int(p[0]) * 3600
+            p = ep['videoLength'].split(':')
+            while p:
+                dur = dur*60 + int(p[0])
                 del p[0]
-            if len(p) > 1:
-                dur += int(p[0]) * 60
-                del p[0]
-            if len(p):
-                dur += int(p[0])
             if dur:
                 info['duration'] = dur
         if snum:
@@ -297,13 +299,15 @@ def list_season(sid, snum, listonly=False):
         else:
             info['mediatype'] = 'video'
             
-        # TODO: check this
-        #if ep.get('requireLogin', False):
-        #    url = ''
-        #    info['overlay'] = 3 #locked
+        if ep.get('requireLogin', False) and not xbmcplugin.getSetting(HANDLE, 'email'):
+            item.setProperty('Overlay', 'locked')
+            #item.setProperty('IsPlayable', 'true')
+            url = '{0}?action=locked&id={1}'.format(PLUGIN_BASE, id)
+        else:
+            item.setProperty('IsPlayable', 'true')
+            url = '{0}?action=play&id={1}'.format(PLUGIN_BASE, id)
         
         item.setInfo('video', info)
-        item.setProperty('IsPlayable', 'true')
         items.append((url, item, False))
     
     if listonly:
@@ -314,6 +318,7 @@ def list_season(sid, snum, listonly=False):
     xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_TITLE_IGNORE_THE)
     xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_LABEL_IGNORE_THE)
     xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_VIDEO_RUNTIME)
+    xbmcplugin.setContent(HANDLE, 'episode')
     xbmcplugin.endOfDirectory(HANDLE)
 
 def play_video(vid):
@@ -352,6 +357,9 @@ def play_video(vid):
         log('No video URL? vid={}, resp={}', vid, vr, level=xbmc.LOGERROR)
         xbmcplugin.setResolvedUrl(HANDLE, False, xbmcgui.ListItem(path='', offscreen=True))
 
+def locked(vid):
+    xbmcgui.Dialog().ok('Login Required', 'You must register/login to BYUtv to view this.\nEnter your login information in the addon settings.')
+
 if __name__ == '__main__':
     PLUGIN_BASE = sys.argv[0]
     HANDLE = int(sys.argv[1])
@@ -374,10 +382,12 @@ if __name__ == '__main__':
         if flat:
             list_show_flat(args.get('id'))
         else:
-            list_show(args.get('id'), args.get('poster', ''))
+            list_show(args.get('id'), args.get('fanart', ''))
     elif action == 'season':
-        list_season(args.get('id'), int(args.get('n', 0)))
+        list_season(args.get('id'), int(args.get('n', 0)), fanart=args.get('fanart', ''))
     elif action == 'play':
         play_video(args.get('id'))
+    elif action == 'locked':
+        locked(args.get('id'))
     else:
         log('Unknown action in params: {}', args, level=xbmc.LOGERROR)
