@@ -284,7 +284,7 @@ def list_season(sid, snum, fanart='', listonly=False):
             art['landscape'] = fanart
         item.setArt(art)
         
-        if 'videoLength' in ep:
+        if  ep.get('videoLength', None):
             dur = 0
             p = ep['videoLength'].split(':')
             while p:
