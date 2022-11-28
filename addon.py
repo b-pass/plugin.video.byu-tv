@@ -16,12 +16,8 @@ import xbmcvfs
 
 HANDLE = -1
 API_BASE = 'https://api.byub.org/'
-API_HEADERS = {
+BASIC_HEADERS = {
     'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:107.0) Gecko/20100101 Firefox/107.0',
-    'x-byub-client':'byutv-web-dk94tsvophi',
-    'x-byub-clientversion':'5.29.41',
-    'x-byub-location': 'us',
-    'Host':'api.byub.org',
     'Accept':'application/json, text/plain, */*',
     #'Referer':'https://www.byutv.org/',
     #'Origin':'https://www.byutv.org',
@@ -29,6 +25,14 @@ API_HEADERS = {
     #"Sec-Fetch-Mode":"cors",
     #"Sec-Fetch-Site":"cross-site",
 }
+API_HEADERS = dict(BASIC_HEADERS)
+API_HEADERS.update({
+    'x-byub-client':'byutv-web-dk94tsvophi',
+    'x-byub-clientversion':'5.29.41',
+    'x-byub-location': 'us',
+    'Host':'api.byub.org',
+    'Accept':'application/json, text/plain, */*',
+})
 
 def log(txt, *args, level=xbmc.LOGINFO):
     if not args:
@@ -53,7 +57,7 @@ def get_json(url, **params):
                 if 'sid' in data:
                     c['sid'] = data['sid']
                 
-                s.get('https://www.byutv.org', headers={'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:107.0) Gecko/20100101 Firefox/107.0'}, cookies=c)
+                s.get('https://www.byutv.org', headers=BASIC_HEADERS, cookies=c)
                 data['expires'] = time.time()+3600
                 try:
                     data['sid'] = s.cookies['sid']
@@ -274,7 +278,6 @@ def list_season(sid, snum, fanart='', listonly=False):
 
     resp = get_json('views/v1/public/lists/content-list/' + sid, limit=100)
     for ep in resp.get('items', []):
-        log(ep)
         if ep.get('sourceType', '').lower() != 'content':
             continue
     
@@ -350,6 +353,7 @@ def list_season(sid, snum, fanart='', listonly=False):
 def play_video(vid):
     vr = get_json('media/v1/public/media/'+vid+'/')
     m = {}
+    url = None
     for a in vr.get('assets', []):
         if a.get('assetType', '').lower().startswith('dash'):
             m = a
@@ -358,23 +362,20 @@ def play_video(vid):
         log('No DASH section found in media/v1')
         m = vr
     
-    url = m.get('preplayUrl', '')
-    if url:
-        pp = requests.get(url, headers=API_HEADERS)
-        log('{} gives {}', url, pp)
-        if pp.status_code == 200:
-            url = pp.json.get('playURL', '')
-            log('upp {}', url)
-            if not url:
-                url = url = m.get('url', '')
-        else:
-            url = m.get('url', '')
-    else:
-        url = m.get('url', '')
+    url = m.get('url', '')
+    #url = m.get('preplayUrl', '')
+    #if url:
+    #    pp = requests.get(url, headers=BASIC_HEADERS)
+    #    if pp.status_code == 200:
+    #        url = pp.json().get('playURL', '')
+    #    else:
+    #        url = ''
+    #if not url:
+    #    url = m.get('url', '')
     
-    log('uv {}', url)
     if url:
-        mpdresp = requests.get(url, headers=API_HEADERS)
+        url = url.replace('.m3u8', '.mpd')
+        mpdresp = requests.get(url, headers=BASIC_HEADERS)
         m = re.search(r'"([^"]*/wv\?[^"]*)"', mpdresp.text)
         lic = m.group(1).replace('&amp;', '&')
         lic += '||R{SSM}|'
