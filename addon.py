@@ -80,18 +80,6 @@ def get_json(url, **params):
     else:
         return resp.json()
 
-def do_login():
-    info = {
-        'email':xbmcplugin.getSetting(HANDLE, 'email'),
-        'password':xbmcplugin.getSetting(HANDLE, 'password')
-    }
-    resp = requests.post('https://accounts-api.byub.org/v1/public/login', json=info, headers=API_HEADERS)
-    # TODO save tokens
-    auth = resp.json()
-    API_HEADERS['Authorization'] = auth['access_token']
-    auth['expiration'] += time.time() - 60
-    xbmcplugin.setSetting(HANDLE, 'auth', json.dumps(auth))
-
 def list_categories():
     items = []
     # pageid 56c21af3-61cc-4b15-b21c-ec68762fcfeb = magic number for main category listing
@@ -126,7 +114,13 @@ def list_category(listid):
                 continue
             
             content = show.get('content', {})
-            if content.get('type', None) != 'show':
+            ctype = content.get('type', None)
+            if ctype == 'oneoff':
+                (item, url) = playable(show)
+                if item and url:
+                    items.append((url, item, False))
+                
+            if ctype != 'show':
                 continue
 
             id = show.get('target', {}).get('value', None)
@@ -140,7 +134,7 @@ def list_category(listid):
             item = xbmcgui.ListItem(label=show['title'])
             if show.get('subtitle', ''):
                 item.setLabel2(show['subtitle'])
-            art = getArt(show.get('images', []), type='content-branded')
+            art = getArt(show.get('images', []))
             item.setArt(art)
             item.setInfo('video', {
                 'title':show['title'],
@@ -165,10 +159,11 @@ def list_category(listid):
     xbmcplugin.setContent(HANDLE, 'tvshows')
     xbmcplugin.endOfDirectory(HANDLE)
 
-def getArt(img, type='badge'):
+def getArt(img):
     art = {}
     for i in img:
-        if i.get('type', type) != type:
+        type = i.get('type', None)
+        if not type:
             continue
         if 'baseUrl' not in i:
             continue
@@ -185,17 +180,40 @@ def getArt(img, type='badge'):
         else:
             aspect = 1
         url += '/512x' + str(int(aspect * 512)) + '.jpg'
-        return {'fanart':url, 'landscape':url, 'icon':url, 'thumb':url}
+        art[type] = url
     
-    if img and 'branded' not in type:
-        i = getArt(img, type+"-branded")
-        if i: return i
+    mapping = [
+        ('badge','icon'),
+        ('content-badge','icon'),
+        ('content','landscape'),
+        ('content-alternate','landscape'),
+        ('content','thumb'),
+        ('content-alternate','thumb'),
+        ('content','fanart'),
+        ('content-alternate','fanart'),
+        ('content-branded','fanart'),
+        ('content-alternate-branded','fanart'),
+        ('content-branded','banner'),
+        ('content-alternate-branded','banner'),
+        ('content-portrait-branded','poster'),
+        ('content-portrait','poster'),
+        ('logo','logo'),
+        ('logo','clearlogo'),
+        ('logo','icon'),
+        ('badge','poster'),
+        ('badge','logo'),
+        ('content-badge','logo'),
+    ]
     
-    if img and 'alternate' not in type:
-        i = getArt(img, type+"-alternate")
-        if i: return i
+    val = {}
     
-    return {}
+    for (s,d) in mapping:
+        if d in val:
+            continue
+        if s in art:
+            val[d] = art[s]
+    
+    return val
 
 def find_section(name, sections):
     for s in sections:
@@ -210,20 +228,24 @@ def find_section(name, sections):
     
     return {}
 
-def list_show(showid, fanart=''):
+def list_show(showid, fanart='', flat=False):
     items = []
     eps = []
     n = 0
     resp = get_json('views/v1/public/pages/' + showid)
+    if 'images' in resp:
+        art = getArt(resp.get('images', []))
+    if not art:
+        art = {'fanart':fanart, 'landscape':fanart} if fanart else {}
     esect = find_section("Episodes", resp.get('sections', []))
     for season in esect.get('lists', []):
         if season.get('type', '') != 'content-list':
+            ctype = season.get('content', {}).get('type','').lower()
+            if ctype == 'episode' or ctype == 'oneoff':
+                (item,url) = playable(season)
+                if item and url:
+                    eps.append((url, item, False))
             continue
-        
-        #if season.get('type', '') != 'ShowSeason':
-        #    if season.get('contentType', '') == 'Episode':
-        #        eps.append(season.get('id', ''))
-        #    continue
         
         id = season.get('id', '')
         if not id:
@@ -240,38 +262,124 @@ def list_show(showid, fanart=''):
                 snum = int(name[6:].strip())
         except:
             pass
+        
+        if flat:
+            items += list_season(id, snum, listonly=True)
+            continue
 
         item = xbmcgui.ListItem(label=name)
-        item.setInfo('video', {
+        info = {
             'title':name, 
             'set':name, 
             'setoverview':name, 
             'season':snum, 
             'mediatype':'season'
-        })
+        }
         
-        if fanart:
-            item.setArt({'fanart':fanart, 'landscape':fanart})
+        if 'title' in resp:
+            info['tvshowtitle'] = resp.get('title', '')
         
+        if 'subtitle' in resp:
+            info['plot'] = resp.get('subtitle', '')
+        
+        if art:
+            item.setArt(art)
+        
+        item.setInfo('video', info)
         url = f'{PLUGIN_BASE}?action=season&n={snum:03d}&id={id}'
         items.append((url, item, True))
     
     if items:
         items = sorted(items, key=lambda t: t[0])
-        xbmcplugin.addDirectoryItems(HANDLE, items, len(items))
-    
+        
     # show has un-season'd episodes, list them too
-    for e in eps:
-        if e:
-            ei = list_season(e, 0, listonly=True, fanart=fanart)
-            xbmcplugin.addDirectoryItems(HANDLE, ei, len(ei))
+    if eps:
+        eps = sorted(eps, key=lambda t: t[0])
+        items += eps
 
+    xbmcplugin.addDirectoryItems(HANDLE, items, len(items))
+    
     xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_UNSORTED)
     xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_LABEL_IGNORE_THE)
     xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_TITLE_IGNORE_THE)
-    #xbmcplugin.setContent(HANDLE, 'season')
+    xbmcplugin.setContent(HANDLE, 'seasons' if not flat else 'episodes')
     xbmcplugin.endOfDirectory(HANDLE)
 
+def playable(ep, n=0, snum=0, fanart=''):
+    media = ep.get('media', {})
+    if not media:
+        media = ep.get('content', {}).get('media', {})
+        if not media:
+            return (None,None)
+
+    id = media.get('id', None)
+    if not id:
+        id = ep.get('target', {}).get('value', None)
+        if not id:
+            id = ep.get('id', '')
+            if not id:
+                return (None,None)
+    
+    info = {
+        'tvshowtitle':ep['title'],
+        'plot':ep.get('description', '')
+    }
+
+    info['title'] = ep['title']
+    
+    item = xbmcgui.ListItem(info['title'])
+    item.setArt(getArt(ep.get('images', [])))
+    
+    if media.get('stop', ''):
+        dur = 0
+        p = media.get('stop', '').split(':')
+        if len(p) > 1 and p[0].startswith('0.'):
+            p[0] = p[0][2:]
+        while p:
+            try:
+                dur = dur*60 + float(p[0])
+            except:
+                pass
+            del p[0]
+        if dur:
+            info['duration'] = int(dur)
+    
+    content = ep.get('content',{})
+    if 'rating' in content:
+        info['mpaa'] = content['rating']
+    
+    if 'parents' in content:
+        for x in content.get('parents', []):
+            if x.get('type','').lower() == 'show' and 'title' in x:
+                info['tvshowtitle'] = x.get('title', '')
+            if x.get('type', '').lower() == 'season' and 'seasonNumber' in x:
+                snum = x.get('seasonNumber', snum)
+    
+    if 'airDate' in ep:
+        d = ep.get('airDate', '').split('T')
+        if d:
+            info['aired'] = d[0]
+    
+    n = content.get('episodeNumber', n)
+    
+    if snum and n:
+        info['mediatype'] = 'episode'
+        info['season'] = snum
+        info['episode'] = n
+    else:
+        info['mediatype'] = 'video'
+    
+    if media.get('requireLogin', False) and not xbmcplugin.getSetting(HANDLE, 'email'):
+        item.setProperty('Overlay', 'locked')
+        #item.setProperty('IsPlayable', 'true')
+        url = '{0}?action=locked&id={1}'.format(PLUGIN_BASE, id)
+    else:
+        item.setProperty('IsPlayable', 'true')
+        url = '{0}?action=play&id={1}'.format(PLUGIN_BASE, id)
+    
+    item.setInfo('video', info)
+    return (item,url)
+    
 def list_season(sid, snum, fanart='', listonly=False):
     n = 0
     items = []
@@ -280,64 +388,12 @@ def list_season(sid, snum, fanart='', listonly=False):
     for ep in resp.get('items', []):
         if ep.get('sourceType', '').lower() != 'content':
             continue
-    
+        
         n += 1
         
-        media = ep.get('media', {})
-        if not media:
-            continue
-
-        id = media.get('id', None)
-        if not id:
-            id = ep.get('target', {}).get('value', None)
-            if not id:
-                id = ep.get('id', '')
-            if not id:
-                continue
-        
-        info = {
-            'tvshowtitle':ep['title'],
-            'plot':ep.get('description', '')
-        }
-
-        #if 'subtitle' in ep:
-        #    info['title'] = ep['subtitle']
-        #else:
-        info['title'] = ep['title']
-        
-        item = xbmcgui.ListItem(info['title'])
-
-        art = getArt(ep.get('images', []), type='content')
-        if fanart:
-            art['fanart'] = fanart
-            art['landscape'] = fanart
-        item.setArt(art)
-        
-        if media.get('stop', ''):
-            dur = 0
-            p = media.get('stop', '').split(':')
-            while p:
-                dur = dur*60 + float(p[0])
-                del p[0]
-            if dur:
-                info['duration'] = int(dur)
-        if snum:
-            info['mediatype'] = 'episode'
-            info['season'] = snum
-            info['episode'] = n
-        else:
-            info['mediatype'] = 'video'
-        
-        if media.get('requireLogin', False) and not xbmcplugin.getSetting(HANDLE, 'email'):
-            item.setProperty('Overlay', 'locked')
-            #item.setProperty('IsPlayable', 'true')
-            url = '{0}?action=locked&id={1}'.format(PLUGIN_BASE, id)
-        else:
-            item.setProperty('IsPlayable', 'true')
-            url = '{0}?action=play&id={1}'.format(PLUGIN_BASE, id)
-        
-        item.setInfo('video', info)
-        items.append((url, item, False))
+        (item, url) = playable(ep, n, snum, fanart)
+        if item and url:
+            items.append((url, item, False))
     
     if listonly:
         return items
@@ -347,8 +403,9 @@ def list_season(sid, snum, fanart='', listonly=False):
     xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_TITLE_IGNORE_THE)
     xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_LABEL_IGNORE_THE)
     xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_VIDEO_RUNTIME)
-    xbmcplugin.setContent(HANDLE, 'episode')
+    xbmcplugin.setContent(HANDLE, 'episodes')
     xbmcplugin.endOfDirectory(HANDLE)
+    return None
 
 def play_video(vid):
     vr = get_json('media/v1/public/media/'+vid+'/')
@@ -414,10 +471,7 @@ if __name__ == '__main__':
             flat = xbmcplugin.getSetting(HANDLE, 'noSeasons').upper()[:1] == 'T'
         except:
             pass
-        if flat:
-            list_show_flat(args.get('id'))
-        else:
-            list_show(args.get('id'), args.get('fanart', ''))
+        list_show(args.get('id'), args.get('fanart', ''), flat=flat)
     elif action == 'season':
         list_season(args.get('id'), int(args.get('n', 0)), fanart=args.get('fanart', ''))
     elif action == 'play':
