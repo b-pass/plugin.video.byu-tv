@@ -14,10 +14,11 @@ import xbmcaddon
 import xbmcplugin
 import xbmcvfs
 
+UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:107.0) Gecko/20100101 Firefox/107.0'
 HANDLE = -1
 API_BASE = 'https://api.byub.org/'
 BASIC_HEADERS = {
-    'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:107.0) Gecko/20100101 Firefox/107.0',
+    'User-Agent':UA,
     'Accept':'application/json, text/plain, */*',
     #'Referer':'https://www.byutv.org/',
     #'Origin':'https://www.byutv.org',
@@ -28,7 +29,7 @@ BASIC_HEADERS = {
 API_HEADERS = dict(BASIC_HEADERS)
 API_HEADERS.update({
     'x-byub-client':'byutv-web-dk94tsvophi',
-    'x-byub-clientversion':'5.29.41',
+    'x-byub-clientversion':'5.33.35',
     'x-byub-location': 'us',
     'Host':'api.byub.org',
     'Accept':'application/json, text/plain, */*',
@@ -232,6 +233,7 @@ def list_show(showid, fanart='', flat=False):
     items = []
     eps = []
     n = 0
+    art = None
     resp = get_json('views/v1/public/pages/' + showid)
     if 'images' in resp:
         art = getArt(resp.get('images', []))
@@ -355,10 +357,9 @@ def playable(ep, n=0, snum=0, fanart=''):
             if x.get('type', '').lower() == 'season' and 'seasonNumber' in x:
                 snum = x.get('seasonNumber', snum)
     
-    if 'airDate' in ep:
-        d = ep.get('airDate', '').split('T')
-        if d:
-            info['aired'] = d[0]
+    d = ep.get('airDate', None)
+    if d:
+        info['aired'] = d.split('T')[0]
     
     n = content.get('episodeNumber', n)
     
@@ -434,15 +435,27 @@ def play_video(vid):
         url = url.replace('.m3u8', '.mpd')
         mpdresp = requests.get(url, headers=BASIC_HEADERS)
         m = re.search(r'"([^"]*/wv\?[^"]*)"', mpdresp.text)
-        lic = m.group(1).replace('&amp;', '&')
-        lic += '||R{SSM}|'
+        lic = '|||'
+        if m:
+            lic = m.group(1).replace('&amp;', '&')
+            # the web client doesn't use the loadbalanced host provided in the MPD, it goes directly to content.uplynk.com instead
+            m = re.search(r'^(.*?://)?([a-zA-Z0-9_.-]+?)(\.uplynk\.com/wv.*)$', lic)
+            if m:
+                lic = (m.group(1) or '') + 'content' + m.group(3)
+            lic += '|Referer=https://www.byutv.org/&Origin=https://www.byutv.org&User-Agent='+UA+'|R{SSM}|'
+        else:
+            log('No wv license in {}', url, level=xbmc.LOGERROR)
 
         item = xbmcgui.ListItem(path=url, offscreen=True)
         item.setProperty('inputstream','inputstream.adaptive')
         item.setProperty('inputstream.adaptive.manifest_type', 'mpd')
         item.setProperty('inputstream.adaptive.license_type', 'com.widevine.alpha')
         item.setProperty('inputstream.adaptive.license_key', lic)
+        #item.setProperty('inputstream.adaptive.license_key', 'https://content.uplynk.com/wv|Content-Type=application/octet-stream&Referer=https://www.byutv.org/&Origin=https://www.byutv.org&User-Agent='+UA+'|R{SSM}|')
+        #item.setProperty('inputstream.adaptive.license_key', 'http://localhost:8000/wv|Content-Type=application/octet-stream&Referer=https://www.byutv.org/&Origin=https://www.byutv.org&User-Agent='+UA+'|R{SSM}|')
+        item.setProperty('inputstream.adaptive.stream_headers', 'User-Agent='+UA+'&Referer=https://www.byutv.org/&Origin=https://www.byutv.org')
         item.setMimeType('application/dash+xml')
+        item.setContentLookup(False)
         item.setProperty('IsPlayable', 'true')
         xbmcplugin.setResolvedUrl(HANDLE, True, item)
     else:
