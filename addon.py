@@ -161,6 +161,7 @@ def list_category(listid):
     xbmcplugin.endOfDirectory(HANDLE)
 
 def getArt(img):
+  try:
     art = {}
     for i in img:
         type = i.get('type', None)
@@ -175,11 +176,12 @@ def getArt(img):
             url += i['id']
         else:
             continue
-        x = i.get('aspectRatio', '').split(':')
-        if len(x) == 2:
+        aspect = 1
+        try:
+          x = i.get('aspectRatio', '').split(':')
+          if len(x) == 2:
             aspect = float(x[1]) / float(x[0])
-        else:
-            aspect = 1
+        except: pass
         url += '/512x' + str(int(aspect * 512)) + '.jpg'
         art[type] = url
     
@@ -215,6 +217,9 @@ def getArt(img):
             val[d] = art[s]
     
     return val
+  except Exception as e:
+    log('Art failure:' + str(e))
+    return {}
 
 def find_section(name, sections):
     for s in sections:
