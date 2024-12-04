@@ -14,7 +14,7 @@ import xbmcaddon
 import xbmcplugin
 import xbmcvfs
 
-UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:107.0) Gecko/20100101 Firefox/107.0'
+UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0'
 HANDLE = -1
 API_BASE = 'https://api.byub.org/'
 BASIC_HEADERS = {
@@ -425,16 +425,16 @@ def play_video(vid):
         log('No DASH section found in media/v1')
         m = vr
     
-    url = m.get('url', '')
-    #url = m.get('preplayUrl', '')
-    #if url:
-    #    pp = requests.get(url, headers=BASIC_HEADERS)
-    #    if pp.status_code == 200:
-    #        url = pp.json().get('playURL', '')
-    #    else:
-    #        url = ''
-    #if not url:
-    #    url = m.get('url', '')
+    #url = m.get('url', '')
+    url = m.get('preplayUrl', '')
+    if url:
+        pp = requests.get(url, headers=BASIC_HEADERS)
+        if pp.status_code == 200:
+            url = pp.json().get('playURL', '')
+        else:
+            url = ''
+    if not url:
+        url = m.get('url', '')
     
     if url:
         url = url.replace('.m3u8', '.mpd')
@@ -444,16 +444,16 @@ def play_video(vid):
         if m:
             lic = m.group(1).replace('&amp;', '&')
             # the web client doesn't use the loadbalanced host provided in the MPD, it goes directly to content.uplynk.com instead
-            m = re.search(r'^(.*?://)?([a-zA-Z0-9_.-]+?)(\.uplynk\.com/wv.*)$', lic)
-            if m:
-                lic = (m.group(1) or '') + 'content' + m.group(3)
+            #m = re.search(r'^(.*?://)?([a-zA-Z0-9_.-]+?)(\.uplynk\.com/wv.*)$', lic)
+            #if m:
+            #    lic = (m.group(1) or '') + 'content' + m.group(3)
             lic += '|Referer=https://www.byutv.org/&Origin=https://www.byutv.org&User-Agent='+UA+'|R{SSM}|'
         else:
             log('No wv license in {}', url, level=xbmc.LOGERROR)
 
         item = xbmcgui.ListItem(path=url, offscreen=True)
         item.setProperty('inputstream','inputstream.adaptive')
-        item.setProperty('inputstream.adaptive.manifest_type', 'mpd')
+        #item.setProperty('inputstream.adaptive.manifest_type', 'mpd')
         item.setProperty('inputstream.adaptive.license_type', 'com.widevine.alpha')
         item.setProperty('inputstream.adaptive.license_key', lic)
         #item.setProperty('inputstream.adaptive.license_key', 'https://content.uplynk.com/wv|Content-Type=application/octet-stream&Referer=https://www.byutv.org/&Origin=https://www.byutv.org&User-Agent='+UA+'|R{SSM}|')
