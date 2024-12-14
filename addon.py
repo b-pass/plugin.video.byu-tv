@@ -439,6 +439,7 @@ def play_video(vid):
     if url:
         url = url.replace('.m3u8', '.mpd')
         mpdresp = requests.get(url, headers=BASIC_HEADERS)
+        #log('got mpd {} - len {}', url, len(mpdresp.text))
         m = re.search(r'"([^"]*/wv\?[^"]*)"', mpdresp.text)
         lic = '|||'
         if m:
@@ -451,11 +452,40 @@ def play_video(vid):
         else:
             log('No wv license in {}', url, level=xbmc.LOGERROR)
 
+        ish_ok = False
+        ishplugin = 'inputstream.adaptive'
+        try:
+            import inputstreamhelper
+            ish = inputstreamhelper.Helper('mpd', 'com.widevine.alpha')
+            ish_ok = ish.check_inputstream()
+            if ish_ok:
+                ishplugin = ish.inputstream_addon
+        except Exception as e:
+            log('Failed to check inputstreamhelper: {}', str(e))
+        
+        if not ish_ok:
+            skip = False
+            try:
+                skip = xbmcplugin.getSetting(HANDLE,'forcePlay').upper()[0] == 'T'
+            except:
+                pass
+            if not skip:
+              skip = xbmcgui.Dialog().yesno('Widevine DRM required',
+                    'WideVine CDM not detected.\nThis video is protected by DRM. You must use the InputStreamHelper kodi plugin to install WideVine.',
+                    nolabel='Cancel',
+                    yeslabel='Continue',
+                    autoclose=30000,
+                    defaultbutton=xbmcgui.DLG_YESNO_NO_BTN)
+            if not skip:
+                xbmcplugin.setResolvedUrl(HANDLE, False, xbmcgui.ListItem(path='', offscreen=True))
+                return
+
         item = xbmcgui.ListItem(path=url, offscreen=True)
-        item.setProperty('inputstream','inputstream.adaptive')
-        #item.setProperty('inputstream.adaptive.manifest_type', 'mpd')
-        item.setProperty('inputstream.adaptive.license_type', 'com.widevine.alpha')
-        item.setProperty('inputstream.adaptive.license_key', lic)
+        item.setProperty('inputstream', ishplugin)
+        item.setProperty('inputstream.adaptive.manifest_type', 'mpd')
+        if len(lic) > 3:
+          item.setProperty('inputstream.adaptive.license_type', 'com.widevine.alpha')
+          item.setProperty('inputstream.adaptive.license_key', lic)
         #item.setProperty('inputstream.adaptive.license_key', 'https://content.uplynk.com/wv|Content-Type=application/octet-stream&Referer=https://www.byutv.org/&Origin=https://www.byutv.org&User-Agent='+UA+'|R{SSM}|')
         #item.setProperty('inputstream.adaptive.license_key', 'http://localhost:8000/wv|Content-Type=application/octet-stream&Referer=https://www.byutv.org/&Origin=https://www.byutv.org&User-Agent='+UA+'|R{SSM}|')
         item.setProperty('inputstream.adaptive.stream_headers', 'User-Agent='+UA+'&Referer=https://www.byutv.org/&Origin=https://www.byutv.org')
