@@ -14,14 +14,15 @@ import xbmcaddon
 import xbmcplugin
 import xbmcvfs
 
-UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0'
+UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:156.0) Gecko/20100101 Firefox/156.0'
 HANDLE = -1
 API_BASE = 'https://api.byub.org/'
 BASIC_HEADERS = {
     'User-Agent':UA,
-    'Accept':'application/json, text/plain, */*',
-    #'Referer':'https://www.byutv.org/',
-    #'Origin':'https://www.byutv.org',
+    'Accept':'*/*',
+    'Referer':'https://www.byutv.org/',
+    'Origin':'https://www.byutv.org',
+    'Accept-Language' : str(xbmc.getLanguage(xbmc.ISO_639_1)).lower(),
     #"Sec-Fetch-Dest":"empty",
     #"Sec-Fetch-Mode":"cors",
     #"Sec-Fetch-Site":"cross-site",
@@ -29,24 +30,22 @@ BASIC_HEADERS = {
 API_HEADERS = dict(BASIC_HEADERS)
 API_HEADERS.update({
     'x-byub-client':'byutv-web-dk94tsvophi',
-    'x-byub-clientversion':'5.33.35',
+    'x-byub-clientversion':'5.69.0',
     'x-byub-location': 'us',
+    'x-byub-offset':'240',
     'Host':'api.byub.org',
-    'Accept':'application/json, text/plain, */*',
+    'x-byub-isauthenticated':'false',
 })
 
-def log(txt, *args, level=xbmc.LOGINFO):
-    if not args:
-        xbmc.log('byu-tv : ' + str(txt), level=level)
-    else:
-        xbmc.log('byu-tv : ' + txt.format(*args), level=level)
-
+def log(txt, level=xbmc.LOGINFO):
+    xbmc.log('byu-tv : ' + str(txt), level=level)
+    
 def get_json(url, **params):
     if 'x-byub-session' not in API_HEADERS:
         data = None
         try:
             data = xbmcvfs.File('special://profile/addon_data/plugin.video.byu-tv/data.json','rb').read()
-        except:
+        except Exception:
             pass
         data = json.loads(data) if data else {}
         e = data.get('expires', 0)
@@ -62,11 +61,11 @@ def get_json(url, **params):
                 data['expires'] = time.time()+3600
                 try:
                     data['sid'] = s.cookies['sid']
-                except:
+                except Exception:
                     pass
                 try:
                     data['did'] = s.cookies['did']
-                except:
+                except Exception:
                     pass
             xbmcvfs.File('special://profile/addon_data/plugin.video.byu-tv/data.json','wb').write(json.dumps(data))
         if 'sid' in data:
@@ -76,15 +75,14 @@ def get_json(url, **params):
         #log(str(API_HEADERS))
     resp = requests.get(API_BASE + url, params=params, headers=API_HEADERS)
     if resp.status_code != 200:
-        log('GET {} failed: code {}', url, resp.status_code)
+        log(f'GET {url} failed: code {resp.status_code}: {resp.text}')
         return {}
     else:
         return resp.json()
 
 def list_categories():
     items = []
-    # pageid 56c21af3-61cc-4b15-b21c-ec68762fcfeb = magic number for main category listing
-    resp = get_json('views/v1/public/pages/shows')
+    resp = get_json('views/v2/public/pages/shows')
     for s in resp.get('sections', []):
         if s.get('type', '') != 'list-section':
             continue
@@ -95,63 +93,74 @@ def list_categories():
             name = cat.get('title', '???')
             item = xbmcgui.ListItem(label=name)
             item.setInfo('video', {'title':name, 'set':name})
-            url = '{0}?action=category&id={1}'.format(PLUGIN_BASE, id)
+            url = f'{PLUGIN_BASE}?action=category&id={id}'
             items.append((url, item, True))
-    log('Listed {} categories', len(items))
+    log(f'Listed {len(items)} categories')
     xbmcplugin.addDirectoryItems(HANDLE, items, len(items))
     xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_UNSORTED)
     xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_LABEL_IGNORE_THE)
     xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_GENRE)
     xbmcplugin.endOfDirectory(HANDLE)
 
+def safe_get(o, *args, default=None):
+    for a in args:
+        try:
+            o = o[a]
+        except Exception:
+            return default
+    return o
+
 def list_category(listid):
     items = []
-    start = 0
+    cursor = ''
     MAX = 50
     while True:
-        resp = get_json('views/v1/public/lists/content-list/'+listid, nextCursor=start, limit=MAX)
+        resp = get_json('views/v2/public/lists/content-list/'+listid, nextCursor=cursor, limit=MAX)
+        
         for show in resp.get('items', []):
-            if show.get('sourceType', '') != 'content':
-                continue
-            
-            content = show.get('content', {})
-            ctype = content.get('type', None)
-            if ctype == 'oneoff':
-                (item, url) = playable(show)
-                if item and url:
-                    items.append((url, item, False))
-                
-            if ctype != 'show':
+            if show.get('sourceType', '') not in ['content','show', 'oneoff', 'episode']:
                 continue
 
-            id = show.get('target', {}).get('value', None)
-            if not id:
-                id = show.get('target', {}).get('pageId', None)
-            if not id:
-                id = show.get('sourceId', None)
+            content = safe_get(show, 'display', 'hover')
+            if not content:
+                continue
+
+            id = safe_get(content, 'targets', 0, 'value')
             if not id:
                 continue
-            
-            item = xbmcgui.ListItem(label=show['title'])
-            if show.get('subtitle', ''):
-                item.setLabel2(show['subtitle'])
-            art = getArt(show.get('images', []))
-            item.setArt(art)
+
+            title = safe_get(content, 'title', 0, 'value')
+            subtitle = safe_get(content, 'subtitle', 0, 'value')
+            desc = safe_get(content, 'description', 0, 'value')
+
+            item = xbmcgui.ListItem(label=title)
+            if subtitle:
+                item.setLabel2(subtitle)
+            art = getArt(show.get('display', {}))
+            if art:
+                item.setArt(art)
             item.setInfo('video', {
-                'title':show['title'],
-                'tvshowtitle':show['title'],
-                'set':show['title'],
-                'setoverview':show.get('description', ''),
-                'plot':show.get('description', ''),
-                'plotoutline':show.get('subtitle', ''),
+                'title':title,
+                'tvshowtitle':title,
+                'set':title,
+                'setoverview':desc,
+                'plot':desc,
+                'plotoutline':subtitle or desc,
                 'mediatype':'tvshow'
             })
-            url = '{0}?action=show&id={1}&fanart={2}'.format(PLUGIN_BASE, id, quote_plus(art.get('fanart', '')))
-            items.append((url, item, True))
-        n = len(resp.get('items', []))
-        if n < MAX:
+
+            if show['sourceType'] == 'oneoff':
+                url = f'{PLUGIN_BASE}?action=play&id={id}'
+                items.append((url, item, False))
+            else:
+                url = f'{PLUGIN_BASE}?action=show&id={id}&fanart=' + quote_plus(art.get('fanart', ''))
+                items.append((url, item, True))
+
+        p = safe_get(resp, 'pageInfo')
+        if p and p.get('hasNextPage', False):
+            cursor = p.get('endCursor', '')
+        else:
             break
-        start += n
     
     xbmcplugin.addDirectoryItems(HANDLE, items, len(items))
     xbmcplugin.addSortMethod(HANDLE, xbmcplugin.SORT_METHOD_LABEL_IGNORE_THE)
@@ -160,14 +169,14 @@ def list_category(listid):
     xbmcplugin.setContent(HANDLE, 'tvshows')
     xbmcplugin.endOfDirectory(HANDLE)
 
-def getArt(img):
+def getArt(show):
   try:
     art = {}
-    for i in img:
-        type = i.get('type', None)
-        if not type:
+    for c in ('standard', 'hover', 'portrait'):
+        i = safe_get(show, c, 'images', 'primary')
+        if i is None:
             continue
-        if 'baseUrl' not in i:
+        if 'baseUrl' not in i or 'type' not in i:
             continue
         url = i['baseUrl'] + '/'
         if 'imageId' in i:
@@ -176,14 +185,14 @@ def getArt(img):
             url += i['id']
         else:
             continue
-        aspect = 1
-        try:
-          x = i.get('aspectRatio', '').split(':')
-          if len(x) == 2:
-            aspect = float(x[1]) / float(x[0])
-        except: pass
-        url += '/512x' + str(int(aspect * 512)) + '.jpg'
-        art[type] = url
+        #aspect = 1
+        #try:
+        #  x = i.get('aspectRatio', '').split(':')
+        #  if len(x) == 2:
+        #    aspect = float(x[1]) / float(x[0])
+        #except Exception: pass
+        url += '/512xauto.jpg'
+        art[i['type']] = url
     
     mapping = [
         ('badge','icon'),
@@ -215,10 +224,12 @@ def getArt(img):
             continue
         if s in art:
             val[d] = art[s]
-    
+
     return val
   except Exception as e:
     log('Art failure:' + str(e))
+    import traceback
+    traceback.print_exc()
     return {}
 
 def find_section(name, sections):
@@ -239,9 +250,8 @@ def list_show(showid, fanart='', flat=False):
     eps = []
     n = 0
     art = None
-    resp = get_json('views/v1/public/pages/' + showid)
-    if 'images' in resp:
-        art = getArt(resp.get('images', []))
+    resp = get_json('views/v2/public/pages/' + showid)
+    art = getArt(resp)
     if not art:
         art = {'fanart':fanart, 'landscape':fanart} if fanart else {}
     esect = find_section("Episodes", resp.get('sections', []))
@@ -267,7 +277,7 @@ def list_show(showid, fanart='', flat=False):
         try:
             if name.startswith('Season'):
                 snum = int(name[6:].strip())
-        except:
+        except Exception:
             pass
         
         if flat:
@@ -280,7 +290,7 @@ def list_show(showid, fanart='', flat=False):
             'set':name, 
             'setoverview':name, 
             'season':snum, 
-            'mediatype':'season'
+            'mediatype':'season',
         }
         
         if 'title' in resp:
@@ -313,60 +323,45 @@ def list_show(showid, fanart='', flat=False):
     xbmcplugin.endOfDirectory(HANDLE)
 
 def playable(ep, n=0, snum=0, fanart=''):
-    media = ep.get('media', {})
-    if not media:
-        media = ep.get('content', {}).get('media', {})
-        if not media:
-            return (None,None)
+    disp = safe_get(ep, 'display', 'standard')
+    if not disp:
+        disp = safe_get(ep, 'display', 'portrait')
+    if not disp:
+        disp = safe_get(ep, 'display', 'hover')
+    if not disp:
+        return (None,None)
 
-    id = media.get('id', None)
+    id = safe_get(disp, 'targets', 0, 'value')
     if not id:
-        id = ep.get('target', {}).get('value', None)
-        if not id:
-            id = ep.get('id', '')
-            if not id:
-                return (None,None)
-    
+        return (None, None)
+
+    title = safe_get(disp, 'title', 0, 'value')
+    subtitle = safe_get(disp, 'primaryInfo', 0, 'value')
+    desc = safe_get(disp, 'description', 0, 'value', default='')
     info = {
-        'tvshowtitle':ep['title'],
-        'plot':ep.get('description', '')
+        'title':title,
+        'tvshowtitle':title,
+        'set':title,
+        'setoverview':desc,
+        'plot':desc,
+        'plotoutline':subtitle or desc,
+        'mediatype':'tvshow',
     }
 
-    info['title'] = ep['title']
-    
-    item = xbmcgui.ListItem(info['title'])
-    item.setArt(getArt(ep.get('images', [])))
-    
-    if media.get('stop', ''):
-        dur = 0
-        p = media.get('stop', '').split(':')
-        if len(p) > 1 and p[0].startswith('0.'):
-            p[0] = p[0][2:]
-        while p:
-            try:
-                dur = dur*60 + float(p[0])
-            except:
-                pass
-            del p[0]
-        if dur:
-            info['duration'] = int(dur)
-    
-    content = ep.get('content',{})
-    if 'rating' in content:
-        info['mpaa'] = content['rating']
-    
-    if 'parents' in content:
-        for x in content.get('parents', []):
-            if x.get('type','').lower() == 'show' and 'title' in x:
-                info['tvshowtitle'] = x.get('title', '')
-            if x.get('type', '').lower() == 'season' and 'seasonNumber' in x:
-                snum = x.get('seasonNumber', snum)
-    
-    d = ep.get('airDate', None)
-    if d:
-        info['aired'] = d.split('T')[0]
-    
-    n = content.get('episodeNumber', n)
+    dur = safe_get(disp, 'secondaryInfo', 0, 'value')
+    if isinstance(dur, str) and dur.endswith('m'):
+        d = 0
+        try:
+            if 'h' in dur:
+                p = dur.split('h')
+                if len(p) > 1:
+                    d = int(p[0])
+                    dur = p[1]
+            d += int(dur[:-1])
+        except Exception:
+            pass
+        if d:
+            info['duration'] = int(d)
     
     if snum and n:
         info['mediatype'] = 'episode'
@@ -374,25 +369,28 @@ def playable(ep, n=0, snum=0, fanart=''):
         info['episode'] = n
     else:
         info['mediatype'] = 'video'
-    
-    if media.get('requireLogin', False) and not xbmcplugin.getSetting(HANDLE, 'email'):
-        item.setProperty('Overlay', 'locked')
-        #item.setProperty('IsPlayable', 'true')
-        url = '{0}?action=locked&id={1}'.format(PLUGIN_BASE, id)
-    else:
-        item.setProperty('IsPlayable', 'true')
-        url = '{0}?action=play&id={1}'.format(PLUGIN_BASE, id)
-    
+
+    item = xbmcgui.ListItem(title)
     item.setInfo('video', info)
-    return (item,url)
+    item.setArt(getArt(ep.get('display', {})))
+
+    #if media.get('requireLogin', False) and not xbmcplugin.getSetting(HANDLE, 'email'):
+    #    item.setProperty('Overlay', 'locked')
+    #    #item.setProperty('IsPlayable', 'true')
+    #    url = f'{PLUGIN_BASE}?action=locked&id={id}'
+    #else:
+    item.setProperty('IsPlayable', 'true')
+    url = f'{PLUGIN_BASE}?action=play&id={id}'
+
+    return (item, url)
     
 def list_season(sid, snum, fanart='', listonly=False):
     n = 0
     items = []
 
-    resp = get_json('views/v1/public/lists/content-list/' + sid, limit=100)
+    resp = get_json('views/v2/public/lists/content-list/' + sid, limit=100)
     for ep in resp.get('items', []):
-        if ep.get('sourceType', '').lower() != 'content':
+        if ep.get('sourceType', '').lower() not in ['content', 'episode', 'show', 'oneoff']:
             continue
         
         n += 1
@@ -414,7 +412,17 @@ def list_season(sid, snum, fanart='', listonly=False):
     return None
 
 def play_video(vid):
-    vr = get_json('media/v1/public/media/'+vid+'/')
+    content = get_json('views/v2/public/content/'+vid)
+    if not content:
+        log('Unable to fetch content info for '+vid)
+        return
+
+    media_id = content.get('mediaId', '')
+    if not media_id:
+        log(f'Unable to find media_id for {vid} in {content}')
+        return
+
+    vr = get_json(f'media/v1/public/media/{media_id}?')
     m = {}
     url = None
     for a in vr.get('assets', []):
@@ -422,7 +430,7 @@ def play_video(vid):
             m = a
             break
     if not m:
-        log('No DASH section found in media/v1')
+        log('No DASH section found in media')
         m = vr
     
     #url = m.get('url', '')
@@ -438,8 +446,9 @@ def play_video(vid):
     
     if url:
         url = url.replace('.m3u8', '.mpd')
+        log(f'fetch mpd {url}')
         mpdresp = requests.get(url, headers=BASIC_HEADERS)
-        #log('got mpd {} - len {}', url, len(mpdresp.text))
+        log(f'got mpd {url} - len {len(mpdresp.text)}')
         m = re.search(r'"([^"]*/wv\?[^"]*)"', mpdresp.text)
         lic = '|||'
         if m:
@@ -450,7 +459,7 @@ def play_video(vid):
             #    lic = (m.group(1) or '') + 'content' + m.group(3)
             lic += '|Referer=https://www.byutv.org/&Origin=https://www.byutv.org&User-Agent='+UA+'|R{SSM}|'
         else:
-            log('No wv license in {}', url, level=xbmc.LOGERROR)
+            log(f'No wv license in {url}', level=xbmc.LOGERROR)
 
         ish_ok = False
         ishplugin = 'inputstream.adaptive'
@@ -461,13 +470,13 @@ def play_video(vid):
             if ish_ok:
                 ishplugin = ish.inputstream_addon
         except Exception as e:
-            log('Failed to check inputstreamhelper: {}', str(e))
+            log(f'Failed to check inputstreamhelper: {e}')
         
         if not ish_ok:
             skip = False
             try:
                 skip = xbmcplugin.getSetting(HANDLE,'forcePlay').upper()[0] == 'T'
-            except:
+            except Exception:
                 pass
             if not skip:
               skip = xbmcgui.Dialog().yesno('Widevine DRM required',
@@ -494,7 +503,7 @@ def play_video(vid):
         item.setProperty('IsPlayable', 'true')
         xbmcplugin.setResolvedUrl(HANDLE, True, item)
     else:
-        log('No video URL? vid={}, resp={}', vid, vr, level=xbmc.LOGERROR)
+        log(f'No video URL? vid={vid}, resp={vr}', level=xbmc.LOGERROR)
         xbmcplugin.setResolvedUrl(HANDLE, False, xbmcgui.ListItem(path='', offscreen=True))
 
 def locked(vid):
@@ -517,7 +526,7 @@ if __name__ == '__main__':
         flat = False
         try:
             flat = xbmcplugin.getSetting(HANDLE, 'noSeasons').upper()[:1] == 'T'
-        except:
+        except Exception:
             pass
         list_show(args.get('id'), args.get('fanart', ''), flat=flat)
     elif action == 'season':
@@ -527,4 +536,4 @@ if __name__ == '__main__':
     elif action == 'locked':
         locked(args.get('id'))
     else:
-        log('Unknown action in params: {}', args, level=xbmc.LOGERROR)
+        log(f'Unknown action in params: {args}', level=xbmc.LOGERROR)
