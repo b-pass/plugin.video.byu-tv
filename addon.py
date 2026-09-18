@@ -151,6 +151,7 @@ def list_category(listid):
 
             if show['sourceType'] == 'oneoff':
                 url = f'{PLUGIN_BASE}?action=play&id={id}'
+                item.setProperty('IsPlayable', 'true')
                 items.append((url, item, False))
             else:
                 url = f'{PLUGIN_BASE}?action=show&id={id}&fanart=' + quote_plus(art.get('fanart', ''))
@@ -437,12 +438,8 @@ def play_video(vid):
     url = m.get('preplayUrl', '')
     if url:
         pp = requests.get(url, headers=BASIC_HEADERS)
-        if pp.status_code == 200:
-            url = pp.json().get('playURL', '')
-        else:
-            url = ''
-    if not url:
-        url = m.get('url', '')
+        url = pp.json().get('playURL', '') if pp.status_code == 200 else ''
+    url = m.get('url', url)
     
     if url:
         url = url.replace('.m3u8', '.mpd')
@@ -486,9 +483,11 @@ def play_video(vid):
                     autoclose=30000,
                     defaultbutton=xbmcgui.DLG_YESNO_NO_BTN)
             if not skip:
+                log('Play failed because if missing Widevine')
                 xbmcplugin.setResolvedUrl(HANDLE, False, xbmcgui.ListItem(path='', offscreen=True))
                 return
 
+        log(f'Resolved to {url}')
         item = xbmcgui.ListItem(path=url, offscreen=True)
         item.setProperty('inputstream', ishplugin)
         item.setProperty('inputstream.adaptive.manifest_type', 'mpd')
